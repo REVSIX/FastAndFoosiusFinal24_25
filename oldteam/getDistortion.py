@@ -15,7 +15,7 @@ objpoints = []  # 3D points in real world space
 imgpoints = []  # 2D points in image plane
 
 # Path to the folder containing your calibration images
-images = glob.glob('/Users/hirshramani/PycharmProjects/foosyFriends/shotsWDan/*.jpg')
+images = glob.glob('/Users/taban/Downloads/Foosball Main Folder Code/src/foosyFriends/shotsWDan/*.jpg')
 
 # Loop over each image to find chessboard corners
 for fname in images:

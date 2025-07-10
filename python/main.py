@@ -1,243 +1,144 @@
 import cv2
 import numpy as np
 import imutils
-from math import sqrt
 import time
 import serial
-import json
 from AntiFisheye import AntiFisheye
-from ArduinoCOM import ArduinoCOM
 
-# Camera and distortion parameters
-# defined parameters for calcualtions for removing distortion effects later
-# K: intrinsic parameters of camera like focal length, principal point
-# D: parameters to remove distortions, ex. if using fisheye lens
-K = np.array([[968.82202387, 0.00000000e+00, 628.92706997], [0.00000000e+00, 970.56156502, 385.82007021],
-              [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])  # Example camera matrix
+# === CONFIGURATION ===
+K = np.array([[968.82202387, 0.0, 628.92706997], [0.0, 970.56156502, 385.82007021], [0.0, 0.0, 1.0]])
 D = np.array([-0.04508764, -0.01990902, 0.08263842, -0.0700435])
 
-# Initialization of tracking and time measurement
-x_coords, y_coords = [], [] #stores values for x and y positions for tracking
-timestamps = [] #array to store time values 
-
-# Dimensions of the table in inches
 width_inches = 23.09
 length_inches = 46.75
-# Stepper motor response time (dummy values, in seconds)
 v_stepper = 10
 
-# Pixel coordinates of the table corners
-ULCorner = (0, 0)  # Upper Left (194,134)
-URCorner = (840, 0)  # Upper Right (1061, 136)
-BLCorner = (0, 470)  # Bottom Left (200, 626)
-BRCorner = (840, 470)  # Bottom Right (1066, 609)
+ULCorner, URCorner = (0, 0), (840, 0)
+BLCorner, BRCorner = (0, 470), (840, 470)
 
-
-# helper methods
-# Convert player area positions from inches to pixels
-# ppi is pixels per inch 
-def convert_to_pixels(player_areas, ppi):
-    return [(start * ppi + URCorner[1], end * ppi + URCorner[1]) for start, end in player_areas]
-
-
-# Convert rod x-asymptotes from inches to pixels
+# === FUNCTIONS ===
 def convert_rod_asymptotes(rod_asymptotes, ppi):
     return [x * ppi + ULCorner[0] for x in rod_asymptotes]
 
-#normalizes the given y position to a value between 0 and 1 where 0 is at the top of the table and 1 is at the bottom of the table
 def normalize_y_position(y, top_pixel=URCorner[1], bottom_pixel=BRCorner[1]):
-    if y < top_pixel:
-        return 0
-    elif y > bottom_pixel:
-        return 1
-    else:
-        return (y - top_pixel) / (bottom_pixel - top_pixel)
+    return min(max((y - top_pixel) / (bottom_pixel - top_pixel), 0), 1)
 
-
-# Function to predict the final position of the ball based on current and previous positions
 def predict_final_position(x1, y1, x2, y2, time_diff):
-    #x1, y1 are the second to last positions recorded
-    #x2, y2 are the last recorded positions
-    #timediff is the time between the last two recordings
     vx = (x2 - x1) / time_diff if time_diff > 0 else 0
     vy = (y2 - y1) / time_diff if time_diff > 0 else 0
     x_final = np.array(rod_x_asymptote_pixels)
-
-    if vx != 0:  #ball is not moving horizontally
-        y_final = y2 + vy * (x_final - x2) / vx #gives final y position for when ball is at x location for each rod, array
-    else:
-        # Create an array of y2 repeated for the length of x_final
-        y_final = np.full_like(x_final, y2)  #all the entries in y_final should be y2 for all x locations
-
+    y_final = y2 + vy * (x_final - x2) / vx if vx != 0 else np.full_like(x_final, y2)
     return x_final, y_final, vx, vy
 
 def closeEnough(array1, val2, tol):
-    # Convert inputs to numpy arrays
-    val1 = np.array(array1)
-    # Compute the absolute difference and check against the tolerance
-    return abs(val1 - val2) < tol
+    return abs(np.array(array1) - val2) < tol
 
+def send_trap_command(arduino_serial):
+    try:
+        print("Sending trap command...")
+        arduino_serial.write(b"trap\n")
+        time.sleep(0.5)
+    except Exception as e:
+        print("Failed to send trap command:", e)
 
-# Calculate pixel-per-inch ratio
-width_pixels = URCorner[0] - ULCorner[0]  # stupid axis, players don't move in this direction
-length_pixels = BRCorner[1] - URCorner[1]  # axis players move on, direction rod shifts
-ppi_width = width_pixels / width_inches
-ppi_length = length_pixels / length_inches
-
-# Define player areas per rod in inches
-player_areas_per_rod_inches = [
-    [(0, 7.4033), (7.4033, 14.8066), (14.8066, 22.2099)],
-    [(0, 3.6445), (4.7865, 8.3435), (9.318, 12.9655), (13.9455, 17.969), (19.014, 23.09)],
-    [(0, 12.551), (9.63, 22.195)],
-    [(0, 8.3), (7.179, 15.479), (14.3, 22.575)]
-]
-
-# Rod x-asymptotes in inches
+# === INIT ===
 rod_x_asymptote_inches = [32.125, 20.5, 8.875, 3]
+ppi_width = (URCorner[0] - ULCorner[0]) / width_inches
+rod_x_asymptote_pixels = convert_rod_asymptotes(rod_x_asymptote_inches, ppi_width)
+rod_x_asymptote_pixels = [595, 373, 147, 36]  # overrides
 
-# Convert to pixels
 player_areas_per_rod_pixels = [
     [(19.5, 165), (165, 310.5), (305, 450.5)],
     [(10, 85.5), (107, 182.5), (201, 276.5), (295, 370.5), (390, 465)],
     [(12, 265), (207, 460)],
     [(12, 178), (205.5, 371.5), (347, 513)]
 ]
-rod_x_asymptote_pixels = convert_rod_asymptotes(rod_x_asymptote_inches, ppi_width)
-rod_x_asymptote_pixels[0] = 595
-rod_x_asymptote_pixels[3] = 36
-rod_x_asymptote_pixels[2] = 147
-rod_x_asymptote_pixels[1] = 373
 
-print("Player Areas per Rod in Pixels:", player_areas_per_rod_pixels)
-print("Rod X-Asymptotes in Pixels:", rod_x_asymptote_pixels)
-
-# Setup camera
-cap = cv2.VideoCapture(1,cv2.CAP_DSHOW)
-
+cap = cv2.VideoCapture(0)
 if not cap.isOpened():
-    print("Error: Could not open video capture device.")
-    exit()
+    raise Exception("Camera not detected.")
 
-# get everything ready for vision processing
-# camera resolution: 1920x1080 pixels
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=True) #used to detect moving object against static background
+fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
 
-# current position of the ball (x2, y2 used for prediciton and x,y used for vision)
-x2, y2 = 0, 0  #prediction
-x, y = 0, 0 #from visiion system
-
-# to mark location of ball in camera frame, (yellow circle that shows up on screen)
+x_coords, y_coords, timestamps = [], [], []
+x2, y2 = 0, 0
+x, y = 0, 0
 radius = 10
-
-# Define range of orange color in HSV, for trakcing the orange ball
 lower_orange = np.array([0, 100, 100])
 upper_orange = np.array([100, 255, 255])
 
-# init communications change port as necessary
-arduino = ArduinoCOM(port='COM4')  # Replace 'COM3' with your actual COM port
+arduino = serial.Serial('COM4', 9600)
+time.sleep(2)  # Wait for Arduino to initialize
 
-# init dummy values for coms arrays
-motorCurrent = [0, 0, 0, 0]  #current stepper motor position
-motorDesired = [0.5, 0.5, 0.5, 0.5] #desired stepper motor position
-servoCurrent = [0, 0, 0, 0] #current servo motor position
-servoDesired = [0, 0, 0, 0] #desired servo motor position
-playerHitting = [-1, -1, -1, -1] #array to dicated which player on which of the four rods is hitting, initialized to all -1
+motorCurrent = [0, 0, 0, 0]
+motorDesired = [0.5, 0.5, 0.5, 0.5]
+servoDesired = [0, 0, 0, 0]
+trapFlags = [False, False, False, False]
+trapReady = [True, True, True, True]
 
-# Main loop
-while True:  #infinite loop to keep processing data
-    # video processing
-    start_time = time.time() 
-    ret, frame = cap.read()  #ret is bpolean for is feed is being captured, frame contains actual pixel data
-    current_time = time.time() #records current time
+# === MAIN LOOP ===
+while True:
+    ret, frame = cap.read()
+    current_time = time.time()
     if not ret:
-        print("Failed to grab frame")
         break
-    frame = imutils.resize(frame, width=1200)  #resize frame, so whole table is shown after resolution change above
-    frame = AntiFisheye.undistort_fisheye_image(frame, K, D) #anti-fisheye
-    frame = frame[120:590, 160:1000] #crops image to region of interest (table)
-    fgmask = fgbg.apply(frame) #applies background subtractor to get foreground mask to detect moving objects
 
-    # Convert the frame to HSV color space from BGR
+    frame = imutils.resize(frame, width=1200)
+    frame = AntiFisheye.undistort_fisheye_image(frame, K, D)
+    frame = frame[120:590, 160:1000]
+    fgmask = fgbg.apply(frame)
+
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    # Threshold the HSV image to get only orange colors
-    mask = cv2.inRange(hsv, lower_orange, upper_orange) #creates binary mask where pixels in the right color range are white 255 and rest is 0 (black)
-    # Bitwise-AND mask and foreground mask to isolate the orange colored moving object
+    mask = cv2.inRange(hsv, lower_orange, upper_orange)
     combined_mask = cv2.bitwise_and(mask, fgmask)
-    # Find contours in the combined mask (find contours of objects that exist in the combined color and foreground mask)
     contours = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours = imutils.grab_contours(contours) #extracts detected contours from the combined mask
+    contours = imutils.grab_contours(contours)
 
-    if len(contours) > 0: #if contours have been found
-        c = max(contours, key=cv2.contourArea) #select largest contour based on the area of the detected contours
-        if cv2.contourArea(c) > 50 and cv2.contourArea(c) > 500:  # Update this threshold as needed
-            ((x, y), _) = cv2.minEnclosingCircle(c) #gets the minimum enclosing circle around the object, x and y set to center of the yellow circle
+    if contours:
+        c = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(c) > 500:
+            ((x, y), _) = cv2.minEnclosingCircle(c)
 
-    #create a circle around the object at (x,y) ball position as detected by the camera, with radius given and color yellow and line thickness of 2
-    cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 255), 2) 
-     
-    cv2.imshow('Frame', frame)  #show the circle on the frame in the camera feed
+    cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 255), 2)
+    cv2.imshow('Frame', frame)
 
-    # set the values of x,y from vision to x2, y2 for prediction
-    #x2, y2 are the predicted values
-    x2, y2 = x, y  # Random values for testing
-    x_coords.append(x2) #add to x_coords array
+    x2, y2 = x, y
+    x_coords.append(x2)
     y_coords.append(y2)
-    timestamps.append(current_time) #log current time
+    timestamps.append(current_time)
 
-    # defence logic
-    if len(x_coords) > 1: #if there are logged values
-        # Calculate velocity and predict final position
-        time_diff = timestamps[-1] - timestamps[-2]  #time between last two recorded positions
-        x_final, y_final, vx, vy = predict_final_position(x_coords[-2], y_coords[-2], x_coords[-1], y_coords[-1],
-                                                          time_diff)
-        #returns final_x (all the rods positions), final_y (all the points at which it would be in y for the corrensponding x), vel_x, vel_y
+    if len(x_coords) > 1:
+        time_diff = timestamps[-1] - timestamps[-2]
+        x_final, y_final, vx, vy = predict_final_position(
+            x_coords[-2], y_coords[-2], x_coords[-1], y_coords[-1], time_diff)
 
-        #enumeraing over (rod#, xposition of rod in pixels)
         for rod_index, x_rod in enumerate(rod_x_asymptote_pixels):
             time_to_intercept = np.abs((x_rod - y2) / vx) if vx != 0 else float('inf')
-            #enumerate over all the player yranges for the specific rod (rod_index)
-            #player_index is the player num (first player at top of rod in cam frame)
-            #start and end indicates the y range for the player in rods span of motion
             for player_index, (start, end) in enumerate(player_areas_per_rod_pixels[rod_index]):
-                #y_final is the y val the ball will be at when its xval = x_rod for that rod
-                if start <= y_final[rod_index] <= end: #if y_final is inbetween range for that player
+                if start <= y_final[rod_index] <= end:
                     motor_travel_time = np.abs(
                         (normalize_y_position(y_final[rod_index]) - motorCurrent[rod_index]) / v_stepper)
-                    if motor_travel_time <= time_to_intercept: #if time to travel is less that intercept time
-                        stepper_position = (y_final[rod_index] - start) / (end - start) #normalized y position within player's range
-                        hitInches = (end - start)*stepper_position + start 
-                        print(
-                            f"Rod {rod_index + 1} Player {player_index + 1}: Move motor to position {stepper_position:.2f} to intercept")
-                        motorDesired[rod_index] = 1-stepper_position  # update desired motor position array
-                        playerHitting[rod_index] = player_index
+                    if motor_travel_time <= time_to_intercept:
+                        stepper_position = (y_final[rod_index] - start) / (end - start)
+                        motorDesired[rod_index] = 1 - stepper_position
+                        trapFlags[rod_index] = True
                     else:
-                        print(
-                            f"Rod {rod_index + 1}: Cannot intercept in time, requires {motor_travel_time:.2f}s, available {time_to_intercept:.2f}s")
-                        playerHitting[rod_index] = -1
-        # servo stuff
-        #print(rod_x_asymptote_pixels) #200, vvv, fff, 750
-        print(x2)  #current ball position in x?
-        #rod_x_asymp pizel are the positions of all four rods in pixels
-        #80 pixels is threshold
-        servoDesired = closeEnough(rod_x_asymptote_pixels, x2, 80) #boolean array if each rod is close enough
-        servoDesired = [float(value) for value in servoDesired]
-        print(servoDesired)
+                        trapFlags[rod_index] = False
 
-    # send and receive coordinates via serial
-    try:
-        # Sending desired positions to the Arduino
-        arduino.send_positions(motorDesired, servoDesired)
+        servoDesired = closeEnough(rod_x_asymptote_pixels, x2, 80)
+        servoDesired = [float(val) for val in servoDesired]
 
-        # Receiving and printing current positions from the Arduino
-        motorCurrent, servoCurrent = arduino.receive_positions()
+        # Trap logic
+        for rod_index, trap in enumerate(trapFlags):
+            if trap and trapReady[rod_index]:
+                send_trap_command(arduino)
+                trapReady[rod_index] = False
 
-    except Exception as e:
-        print("An error occurred:", e)
-
-    end_time = time.time()
-    print(end_time-start_time)
+            # Reset if ball far away from rod
+            if abs(x2 - rod_x_asymptote_pixels[rod_index]) > 120:
+                trapReady[rod_index] = True
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break

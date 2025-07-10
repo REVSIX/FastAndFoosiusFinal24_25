@@ -37,7 +37,7 @@ D = np.array([-0.01093008, -0.23537576, 0.6907555, -0.48150618])  # Example dist
 K = K.astype(np.float64)
 D = D.astype(np.float64)
 
-image_path = "/Users/hirshramani/PycharmProjects/foosyFriends/shotsWDan/Photo on 3-20-24 at 4.13 PM.jpg"  # Change to the path of your image
+image_path = "/Users/taban/Downloads/Foosball Main Folder Code/src/foosyFriends/shotsWDan/Photo on 3-20-24 at 4.13 PM.jpg"  # Change to the path of your image
 frame = cv2.imread(image_path)
 # Correct the image
 undistorted_img = AntiFisheye.undistort_fisheye_image(frame, K, D)
