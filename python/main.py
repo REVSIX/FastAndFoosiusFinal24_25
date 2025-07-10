@@ -5,7 +5,6 @@ import time
 import serial
 from AntiFisheye import AntiFisheye
 
-# === CONFIGURATION ===
 K = np.array([[968.82202387, 0.0, 628.92706997], [0.0, 970.56156502, 385.82007021], [0.0, 0.0, 1.0]])
 D = np.array([-0.04508764, -0.01990902, 0.08263842, -0.0700435])
 
@@ -16,7 +15,6 @@ v_stepper = 10
 ULCorner, URCorner = (0, 0), (840, 0)
 BLCorner, BRCorner = (0, 470), (840, 470)
 
-# === FUNCTIONS ===
 def convert_rod_asymptotes(rod_asymptotes, ppi):
     return [x * ppi + ULCorner[0] for x in rod_asymptotes]
 
@@ -41,7 +39,7 @@ def send_trap_command(arduino_serial):
     except Exception as e:
         print("Failed to send trap command:", e)
 
-# === INIT ===
+# Start of rod initialization
 rod_x_asymptote_inches = [32.125, 20.5, 8.875, 3]
 ppi_width = (URCorner[0] - ULCorner[0]) / width_inches
 rod_x_asymptote_pixels = convert_rod_asymptotes(rod_x_asymptote_inches, ppi_width)
@@ -78,7 +76,7 @@ servoDesired = [0, 0, 0, 0]
 trapFlags = [False, False, False, False]
 trapReady = [True, True, True, True]
 
-# === MAIN LOOP ===
+# Main Loop
 while True:
     ret, frame = cap.read()
     current_time = time.time()
