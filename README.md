@@ -1,4 +1,6 @@
 🕹️ Autonomous Foosball Table
+
+
 Welcome to the Autonomous Foosball Table project! This repository contains all Python and Arduino code used to develop and simulate a robotic foosball defense system using stepper motors, servos, and a webcam. The table tracks and reacts to a ball in real-time using computer vision and PID/Kalman-based control logic. Built on top of the [FastAndFossiusFinal24_25](https://github.com/MayaGharat/Fast-Foosius24_25)
 project, this iteration intends to combine the mechanical capabilities of the project with offensive logic and coordinated system movement.
 
