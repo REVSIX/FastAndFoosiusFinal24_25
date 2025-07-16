@@ -97,16 +97,16 @@ void findLimits(StepperControl &stepper, int lowSwitch, int highSwitch) {
 void setServoPosition(int servoIndex, int angle) {
     switch (servoIndex) {
       case 0:
-        servo1.write(int(48-(angle*4/5))); // 3/5 to accomodate for gear ratio
+        servo1.write(int((angle*4/5))); // 3/5 to accomodate for gear ratio
         break;
       case 1:
-        servo2.write(int(angle+85));
+        servo2.write(int(angle));
         break;
       case 2:
-        servo3.write(int(48-(angle*2.1/5))); // 3/5 to accomodate for gear ratio
+        servo3.write(int((angle*2.1/5))); // 3/5 to accomodate for gear ratio
         break;
       case 3:
-        servo4.write(int(angle+21));
+        servo4.write(int(angle));
         break;
     }
   }
