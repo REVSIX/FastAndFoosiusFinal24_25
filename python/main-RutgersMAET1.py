@@ -99,8 +99,8 @@ radius = 10
 
 # ----------- CHANGED: Use BGR bounds for color tracking -----------
 # For a yellow-green ball, RGB (204, 255, 110) is BGR (110, 255, 204)
-lower_bound = np.array([65, 50, 85])
-upper_bound = np.array([85, 110, 255])
+lower_rgb = np.array([65, 50, 85])
+upper_rgb = np.array([85, 110, 255])
 
 # -----------------------------------------------------------------
 
