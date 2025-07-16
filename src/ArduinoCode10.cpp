@@ -103,7 +103,7 @@ void setServoPosition(int servoIndex, int angle) {
         servo2.write(int(angle));
         break;
       case 2:
-        servo3.write(int((angle*2.1/5))); // 3/5 to accomodate for gear ratio
+        servo3.write(int((angle*2/5+10))); // 3/5 to accomodate for gear ratio
         break;
       case 3:
         servo4.write(int(angle));

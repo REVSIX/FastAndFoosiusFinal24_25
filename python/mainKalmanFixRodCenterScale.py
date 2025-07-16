@@ -455,7 +455,7 @@ while True:  #infinite loop to keep processing data
 
 
     if frame_counter % send_every_n_frames ==0:
-        # send and receive coordinates via serial
+        # send and receive coordinates via serial communication
         try:
             #print(motorDesired)
             #print()
