@@ -9,7 +9,7 @@ table_width, table_height = 800, 480
 rod_x_asymptote_pixels = [595, 373, 147, 36]
 player_counts = [3, 5, 2, 3]  # per rod
 player_radius = 20
-v_stepper = 0.07
+v_stepper = 0.05  # Slower movement (was 0.07)
 min_rod_y, max_rod_y = player_radius / table_height, 1 - player_radius / table_height
 
 # --- PID Controller ---
@@ -128,7 +128,7 @@ def update_player_positions():
         else:
             y_cross = ball_y
         y_cross = clamp(y_cross, player_radius, table_height - player_radius)
-        # Calculate player ranges
+        # Calculate player centers
         total_span = table_height - 2 * player_radius
         spacing = total_span / (n_players + 1)
         player_centers = [player_radius + (i + 1) * spacing for i in range(n_players)]
@@ -141,10 +141,13 @@ def update_player_positions():
         min_offset = player_radius - min(player_centers)
         max_offset = (table_height - player_radius) - max(player_centers)
         offset = clamp(offset, min_offset, max_offset)
-        # Apply offset to all players
-        new_positions = [pc + offset for pc in player_centers]
+        # Smoothly move the rod: interpolate current positions toward new positions
+        current_positions = [patch.center[1] for patch in patches]
+        target_positions = [pc + offset for pc in player_centers]
+        move_speed = 0.08  # fraction of distance to move per frame (tune for smoothness)
+        new_positions = [cur + move_speed * (tgt - cur) for cur, tgt in zip(current_positions, target_positions)]
         # Log data for debugging
-        print(f"Rod {rod_index}: n_players={n_players}, y_cross={y_cross:.2f}, intercept_idx={intercept_idx}, offset={offset:.2f}, player_centers={player_centers}, new_positions={new_positions}")
+        print(f"Rod {rod_index}: n_players={n_players}, y_cross={y_cross:.2f}, intercept_idx={intercept_idx}, offset={offset:.2f}, player_centers={player_centers}, target_positions={target_positions}, new_positions={new_positions}")
         # Set positions
         for i, patch in enumerate(patches):
             patch.center = (x, new_positions[i])
