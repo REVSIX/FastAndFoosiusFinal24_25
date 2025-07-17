@@ -10,6 +10,8 @@ rod_x_asymptote_pixels = [595, 373, 147, 36]
 player_counts = [3, 5, 2, 3]  # per rod
 player_radius = 20
 v_stepper = 0.05  # Slower movement (was 0.07)
+BALL_SPEED_FACTOR = 0.05  # Much slower ball
+BALL_BOUNCE_FACTOR = 0.7  # Ball bounces with more energy
 min_rod_y, max_rod_y = player_radius / table_height, 1 - player_radius / table_height
 
 # --- PID Controller ---
@@ -47,7 +49,7 @@ rod_targets = [0.5] * 4
 rod_lines = [ax.plot([x, x], [0, table_height], color='white', lw=3)[0] for x in rod_x_asymptote_pixels]
 
 # Ball setup
-ball = Circle((table_width / 2, table_height / 2), radius=10, color='white')
+ball = Circle((500, 200), radius=10, color='white')
 ax.add_patch(ball)
 state_text = ax.text(10, 20, "State: IDLE", fontsize=12, color="white")
 
@@ -76,27 +78,54 @@ def normalize_y(y):
 def clamp(val, min_val, max_val):
     return max(min(val, max_val), min_val)
 
+# --- Ball windup state ---
+ball_windup = {"active": False, "start_x": None, "start_y": None, "vx": 0, "vy": 0}
+
 # Mouse events
 def on_press(event):
     if ball.contains(event)[0]:
         drag_data.update(x=event.xdata, y=event.ydata, last_time=time.time())
+        ball_windup["active"] = True
+        ball_windup["start_x"] = event.xdata
+        ball_windup["start_y"] = event.ydata
+        ball_windup["vx"] = 0
+        ball_windup["vy"] = 0
+        drag_data["vx"] = 0
+        drag_data["vy"] = 0
+
 
 def on_release(event):
     drag_data["x"] = None
     drag_data["y"] = None
+    if ball_windup["active"]:
+        # Calculate windup velocity only if mouse was dragged a significant distance
+        dx = event.xdata - ball_windup["start_x"] if event.xdata is not None else 0
+        dy = event.ydata - ball_windup["start_y"] if event.ydata is not None else 0
+        dist = np.hypot(dx, dy)
+        if dist > 10:  # Only wind up if drag is significant
+            ball_windup["vx"] = dx * 0.2
+            ball_windup["vy"] = dy * 0.2
+            drag_data["vx"] = ball_windup["vx"]
+            drag_data["vy"] = ball_windup["vy"]
+        else:
+            drag_data["vx"] = 0
+            drag_data["vy"] = 0
+        ball_windup["active"] = False
 
 def on_motion(event):
     if drag_data["x"] is None or event.xdata is None or event.ydata is None:
         return
-
-    dt = time.time() - drag_data["last_time"]
-    dx = event.xdata - drag_data["x"]
-    dy = event.ydata - drag_data["y"]
-    vx = dx / dt if dt > 0 else 0
-    vy = dy / dt if dt > 0 else 0
-    drag_data.update(x=event.xdata, y=event.ydata, vx=vx, vy=vy, last_time=time.time())
-    ball.set_center((event.xdata, event.ydata))
-
+    # Only update ball position if windup is active
+    if ball_windup["active"]:
+        ball.set_center((event.xdata, event.ydata))
+        drag_data["x"] = event.xdata
+        drag_data["y"] = event.ydata
+        drag_data["last_time"] = time.time()
+        # Use zero velocity while dragging
+        vx, vy = 0, 0
+    else:
+        # Use last known velocities from drag_data
+        vx, vy = drag_data["vx"], drag_data["vy"]
     x_final = np.array(rod_x_asymptote_pixels)
     y2 = event.ydata
     y_final = y2 + vy * (x_final - event.xdata) / vx if vx != 0 else np.full_like(x_final, y2)
@@ -152,6 +181,25 @@ def update_player_positions():
         for i, patch in enumerate(patches):
             patch.center = (x, new_positions[i])
 
+def detect_ball_collision(ball_pos, ball_radius, rods, rod_players, player_radius):
+    # Check collision with players
+    for rod_index, x in enumerate(rods):
+        for patch in rod_players[rod_index]:
+            px, py = patch.center
+            dist = np.hypot(ball_pos[0] - px, ball_pos[1] - py)
+            if dist < ball_radius + player_radius:
+                return ('player', rod_index, px, py)
+    # Check collision with walls
+    if ball_pos[1] - ball_radius <= 0:
+        return ('wall', 'top')
+    if ball_pos[1] + ball_radius >= table_height:
+        return ('wall', 'bottom')
+    if ball_pos[0] - ball_radius <= 0:
+        return ('wall', 'left')
+    if ball_pos[0] + ball_radius >= table_width:
+        return ('wall', 'right')
+    return None
+
 # Animate
 def animate(frame):
     now = time.time()
@@ -160,6 +208,46 @@ def animate(frame):
         rod_last_time[i] = now
         step = rod_pids[i].update(rod_targets[i], rod_positions[i], dt)
         rod_positions[i] = clamp(rod_positions[i] + step, min_rod_y, max_rod_y)
+
+    # Ball physics simulation
+    ball_x, ball_y = ball.center
+    vx, vy = drag_data["vx"], drag_data["vy"]
+    # Slow down the ball for realism
+    vx *= BALL_SPEED_FACTOR
+    vy *= BALL_SPEED_FACTOR
+    # Simulate ball movement
+    ball_x += vx
+    ball_y += vy
+    collision = detect_ball_collision((ball_x, ball_y), ball.radius, rod_x_asymptote_pixels, rod_players, player_radius)
+    if collision:
+        if collision[0] == 'player':
+            # Ball hits player: stop in front of them, not under
+            px, py = collision[2], collision[3]
+            dx = ball_x - px
+            dy = ball_y - py
+            dist = np.hypot(dx, dy)
+            if dist == 0:
+                # Default to above player if perfectly aligned
+                dx, dy = 0, -1
+            # Place ball at edge of player, in direction it came from
+            norm = np.hypot(dx, dy)
+            if norm == 0:
+                norm = 1
+            ball_x = px + (dx / norm) * (player_radius + ball.radius + 1)
+            ball_y = py + (dy / norm) * (player_radius + ball.radius + 1)
+            vx, vy = 0, 0
+        elif collision[0] == 'wall':
+            # Ball hits wall: bounce
+            if collision[1] == 'top' or collision[1] == 'bottom':
+                vy = -vy * BALL_BOUNCE_FACTOR
+            if collision[1] == 'left' or collision[1] == 'right':
+                vx = -vx * BALL_BOUNCE_FACTOR
+            # Clamp ball position inside table
+            ball_x = clamp(ball_x, ball.radius, table_width - ball.radius)
+            ball_y = clamp(ball_y, ball.radius, table_height - ball.radius)
+    ball.set_center((ball_x, ball_y))
+    drag_data["vx"], drag_data["vy"] = vx, vy
+    drag_data["x"], drag_data["y"] = ball_x, ball_y
 
     update_player_positions()
 
