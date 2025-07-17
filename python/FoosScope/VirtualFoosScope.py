@@ -36,7 +36,7 @@ class SimplePID:
 
 # --- Setup Graphics ---
 fig, ax = plt.subplots()
-fig.canvas.manager.set_window_title("Realistic Foosball Defense Simulation (PID)")
+fig.canvas.manager.set_window_title("FoosScope - Realistic Foosball Simulation")
 ax.set_xlim(0, table_width)
 ax.set_ylim(0, table_height)
 ax.set_aspect('equal')
