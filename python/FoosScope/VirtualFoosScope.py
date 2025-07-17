@@ -11,8 +11,8 @@ rod_x_asymptote_pixels = [595, 373, 147, 36]
 player_counts = [3, 5, 2, 3]  # per rod
 player_radius = 20
 v_stepper = 0.05  # Slower movement (was 0.07)
-BALL_SPEED_FACTOR = 0.15  # Much slower ball
-BALL_BOUNCE_FACTOR = 1  # Ball bounces with more energy
+BALL_SPEED_FACTOR = 0.2  # Much slower ball
+BALL_BOUNCE_FACTOR = 0.7  # Ball bounces with more energy
 min_rod_y, max_rod_y = player_radius / table_height, 1 - player_radius / table_height
 
 # --- PID Controller ---
