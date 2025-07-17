@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from matplotlib.animation import FuncAnimation
 import time
+random_path = {"active": False, "start": None, "end": None, "speed": 0, "direction": None, "t": 0, "length": 0}
 
 # --- Constants ---
 table_width, table_height = 800, 480
@@ -10,8 +11,8 @@ rod_x_asymptote_pixels = [595, 373, 147, 36]
 player_counts = [3, 5, 2, 3]  # per rod
 player_radius = 20
 v_stepper = 0.05  # Slower movement (was 0.07)
-BALL_SPEED_FACTOR = 0.05  # Much slower ball
-BALL_BOUNCE_FACTOR = 0.7  # Ball bounces with more energy
+BALL_SPEED_FACTOR = 0.15  # Much slower ball
+BALL_BOUNCE_FACTOR = 1  # Ball bounces with more energy
 min_rod_y, max_rod_y = player_radius / table_height, 1 - player_radius / table_height
 
 # --- PID Controller ---
@@ -212,39 +213,91 @@ def animate(frame):
     # Ball physics simulation
     ball_x, ball_y = ball.center
     vx, vy = drag_data["vx"], drag_data["vy"]
-    # Slow down the ball for realism
-    vx *= BALL_SPEED_FACTOR
-    vy *= BALL_SPEED_FACTOR
-    # Simulate ball movement
-    ball_x += vx
-    ball_y += vy
-    collision = detect_ball_collision((ball_x, ball_y), ball.radius, rod_x_asymptote_pixels, rod_players, player_radius)
-    if collision:
-        if collision[0] == 'player':
-            # Ball hits player: stop in front of them, not under
-            px, py = collision[2], collision[3]
-            dx = ball_x - px
-            dy = ball_y - py
-            dist = np.hypot(dx, dy)
-            if dist == 0:
-                # Default to above player if perfectly aligned
-                dx, dy = 0, -1
-            # Place ball at edge of player, in direction it came from
-            norm = np.hypot(dx, dy)
-            if norm == 0:
-                norm = 1
-            ball_x = px + (dx / norm) * (player_radius + ball.radius + 1)
-            ball_y = py + (dy / norm) * (player_radius + ball.radius + 1)
-            vx, vy = 0, 0
-        elif collision[0] == 'wall':
-            # Ball hits wall: bounce
-            if collision[1] == 'top' or collision[1] == 'bottom':
-                vy = -vy * BALL_BOUNCE_FACTOR
-            if collision[1] == 'left' or collision[1] == 'right':
-                vx = -vx * BALL_BOUNCE_FACTOR
-            # Clamp ball position inside table
-            ball_x = clamp(ball_x, ball.radius, table_width - ball.radius)
-            ball_y = clamp(ball_y, ball.radius, table_height - ball.radius)
+    # If random_path is active, move ball along the segment
+    if random_path["active"]:
+        # Make random_path much faster and add wall bounce physics
+        direction = random_path["direction"]
+        speed = random_path["speed"] * BALL_SPEED_FACTOR * 8.0  # Much faster
+        friction = 0.98  # Friction factor per frame
+        next_pos = np.array([ball_x, ball_y]) + direction * speed
+        bounced = False
+        # Bounce off walls
+        if next_pos[0] - ball.radius <= 0 or next_pos[0] + ball.radius >= table_width:
+            direction[0] = -direction[0]
+            next_pos[0] = clamp(next_pos[0], ball.radius, table_width - ball.radius)
+            bounced = True
+        if next_pos[1] - ball.radius <= 0 or next_pos[1] + ball.radius >= table_height:
+            direction[1] = -direction[1]
+            next_pos[1] = clamp(next_pos[1], ball.radius, table_height - ball.radius)
+            bounced = True
+        # Check collision with players
+        collision = detect_ball_collision(next_pos, ball.radius, rod_x_asymptote_pixels, rod_players, player_radius)
+        if collision:
+            if collision[0] == 'player':
+                # Ball hits player: bounce off and decelerate
+                px, py = collision[2], collision[3]
+                dx = next_pos[0] - px
+                dy = next_pos[1] - py
+                dist = np.hypot(dx, dy)
+                if dist == 0:
+                    dx, dy = 0, -1
+                norm = np.hypot(dx, dy)
+                if norm == 0:
+                    norm = 1
+                # Place ball just outside player
+                next_pos[0] = px + (dx / norm) * (player_radius + ball.radius + 1)
+                next_pos[1] = py + (dy / norm) * (player_radius + ball.radius + 1)
+                # Reflect direction and decelerate
+                direction = -direction
+                random_path["speed"] *= friction * 0.85  # Lose more speed on player bounce
+                bounced = True
+            elif collision[0] == 'wall':
+                # Ball hits wall: bounce (already handled above)
+                pass
+        random_path["direction"] = direction
+        # Decelerate after each bounce or frame
+        if bounced:
+            random_path["speed"] *= friction * 0.95  # Extra loss on bounce
+        else:
+            random_path["speed"] *= friction
+        # Stop if speed is very low
+        if random_path["speed"] < 0.5:
+            random_path["active"] = False
+            drag_data["vx"] = 0
+            drag_data["vy"] = 0
+        ball_x, ball_y = next_pos[0], next_pos[1]
+        drag_data["x"], drag_data["y"] = ball_x, ball_y
+        ball.set_center((ball_x, ball_y))
+    else:
+        # Normal ball movement
+        vx *= BALL_SPEED_FACTOR
+        vy *= BALL_SPEED_FACTOR
+        ball_x += vx
+        ball_y += vy
+        collision = detect_ball_collision((ball_x, ball_y), ball.radius, rod_x_asymptote_pixels, rod_players, player_radius)
+        if collision:
+            if collision[0] == 'player':
+                # Ball hits player: stop in front of them, not under
+                px, py = collision[2], collision[3]
+                dx = ball_x - px
+                dy = ball_y - py
+                dist = np.hypot(dx, dy)
+                if dist == 0:
+                    dx, dy = 0, -1
+                norm = np.hypot(dx, dy)
+                if norm == 0:
+                    norm = 1
+                ball_x = px + (dx / norm) * (player_radius + ball.radius + 1)
+                ball_y = py + (dy / norm) * (player_radius + ball.radius + 1)
+                vx, vy = 0, 0
+            elif collision[0] == 'wall':
+                # Ball hits wall: bounce
+                if collision[1] == 'top' or collision[1] == 'bottom':
+                    vy = -vy * BALL_BOUNCE_FACTOR
+                if collision[1] == 'left' or collision[1] == 'right':
+                    vx = -vx * BALL_BOUNCE_FACTOR
+                ball_x = clamp(ball_x, ball.radius, table_width - ball.radius)
+                ball_y = clamp(ball_y, ball.radius, table_height - ball.radius)
     ball.set_center((ball_x, ball_y))
     drag_data["vx"], drag_data["vy"] = vx, vy
     drag_data["x"], drag_data["y"] = ball_x, ball_y
@@ -261,5 +314,159 @@ fig.canvas.mpl_connect('button_press_event', on_press)
 fig.canvas.mpl_connect('button_release_event', on_release)
 fig.canvas.mpl_connect('motion_notify_event', on_motion)
 
+def on_double_click(event):
+    global random_path
+    if event.dblclick:
+        # Teleport ball to cursor and launch along a random path
+        ball.set_center((event.xdata, event.ydata))
+        drag_data["x"] = event.xdata
+        drag_data["y"] = event.ydata
+        import random
+        angle = random.uniform(0, 2 * np.pi)
+        length = random.uniform(100, 400)  # Path length in pixels
+        speed = random.uniform(3, 10)      # Ball speed in pixels/frame
+        ball_x, ball_y = event.xdata, event.ydata
+        end_x = ball_x + np.cos(angle) * length
+        end_y = ball_y + np.sin(angle) * length
+        # Clamp end point to table bounds
+        end_x = clamp(end_x, ball.radius, table_width - ball.radius)
+        end_y = clamp(end_y, ball.radius, table_height - ball.radius)
+        direction = np.array([end_x - ball_x, end_y - ball_y])
+        norm = np.linalg.norm(direction)
+        if norm == 0:
+            direction = np.array([1, 0])
+            norm = 1
+        direction = direction / norm
+        path_vec = np.array([end_x - ball_x, end_y - ball_y])
+        path_length = np.linalg.norm(path_vec)
+        random_path["active"] = True
+        random_path["start"] = np.array([ball_x, ball_y])
+        random_path["end"] = np.array([end_x, end_y])
+        random_path["speed"] = speed
+        random_path["direction"] = direction
+        random_path["t"] = 0
+        random_path["length"] = path_length
+        drag_data["vx"] = 0
+        drag_data["vy"] = 0
+        ball_windup["active"] = False
+        print(f"Ball teleported to ({event.xdata}, {event.ydata}) and launched along path to ({end_x:.1f},{end_y:.1f}) at speed {speed:.2f}")
+
+fig.canvas.mpl_connect('button_press_event', on_double_click)
+
 ani = FuncAnimation(fig, animate, interval=20)
 plt.show()
+
+## REMOVE DUPLICATE random_path DEFINITION
+
+def on_key_press(event):
+    global random_path
+    if event.key == ' ':  # Space bar
+        import random
+        # Pick a random direction and length
+        angle = random.uniform(0, 2 * np.pi)
+        length = random.uniform(100, 400)  # Path length in pixels
+        speed = random.uniform(3, 10)      # Ball speed in pixels/frame
+        ball_x, ball_y = ball.center
+        end_x = ball_x + np.cos(angle) * length
+        end_y = ball_y + np.sin(angle) * length
+        # Clamp end point to table bounds
+        end_x = clamp(end_x, ball.radius, table_width - ball.radius)
+        end_y = clamp(end_y, ball.radius, table_height - ball.radius)
+        direction = np.array([end_x - ball_x, end_y - ball_y])
+        norm = np.linalg.norm(direction)
+        if norm == 0:
+            direction = np.array([1, 0])
+            norm = 1
+        direction = direction / norm
+        path_vec = np.array([end_x - ball_x, end_y - ball_y])
+        path_length = np.linalg.norm(path_vec)
+        random_path["active"] = True
+        random_path["start"] = np.array([ball_x, ball_y])
+        random_path["end"] = np.array([end_x, end_y])
+        random_path["speed"] = speed
+        random_path["direction"] = direction
+        random_path["t"] = 0
+        random_path["length"] = path_length
+        drag_data["vx"] = 0
+        drag_data["vy"] = 0
+        print(f"Space bar: Ball path from ({ball_x:.1f},{ball_y:.1f}) to ({end_x:.1f},{end_y:.1f}) at speed {speed:.2f}")
+
+fig.canvas.mpl_connect('key_press_event', on_key_press)
+
+# --- Patch animate to follow random path ---
+old_animate = animate
+
+def animate(frame):
+    now = time.time()
+    for i in range(4):
+        dt = now - rod_last_time[i]
+        rod_last_time[i] = now
+        step = rod_pids[i].update(rod_targets[i], rod_positions[i], dt)
+        rod_positions[i] = clamp(rod_positions[i] + step, min_rod_y, max_rod_y)
+
+    # Ball physics simulation
+    ball_x, ball_y = ball.center
+    vx, vy = drag_data["vx"], drag_data["vy"]
+    # If random_path is active, move ball along the segment
+    if random_path["active"]:
+        # Move ball along the line segment using parameter t
+        speed = random_path["speed"] * BALL_SPEED_FACTOR
+        t = random_path["t"]
+        length = random_path["length"]
+        if length == 0:
+            # Degenerate case, just set to end
+            pos = random_path["end"]
+            random_path["active"] = False
+        else:
+            t_new = t + speed
+            if t_new >= length:
+                t_new = length
+                random_path["active"] = False
+            pos = random_path["start"] + (random_path["end"] - random_path["start"]) * (t_new / length)
+            random_path["t"] = t_new
+        ball_x, ball_y = pos[0], pos[1]
+        drag_data["x"], drag_data["y"] = ball_x, ball_y
+        ball.set_center((ball_x, ball_y))
+        drag_data["vx"] = 0
+        drag_data["vy"] = 0
+    else:
+        # Normal ball movement
+        vx *= BALL_SPEED_FACTOR
+        vy *= BALL_SPEED_FACTOR
+        ball_x += vx
+        ball_y += vy
+        collision = detect_ball_collision((ball_x, ball_y), ball.radius, rod_x_asymptote_pixels, rod_players, player_radius)
+        if collision:
+            if collision[0] == 'player':
+                # Ball hits player: stop in front of them, not under
+                px, py = collision[2], collision[3]
+                dx = ball_x - px
+                dy = ball_y - py
+                dist = np.hypot(dx, dy)
+                if dist == 0:
+                    dx, dy = 0, -1
+                norm = np.hypot(dx, dy)
+                if norm == 0:
+                    norm = 1
+                ball_x = px + (dx / norm) * (player_radius + ball.radius + 1)
+                ball_y = py + (dy / norm) * (player_radius + ball.radius + 1)
+                vx, vy = 0, 0
+            elif collision[0] == 'wall':
+                # Ball hits wall: bounce
+                if collision[1] == 'top' or collision[1] == 'bottom':
+                    vy = -vy * BALL_BOUNCE_FACTOR
+                if collision[1] == 'left' or collision[1] == 'right':
+                    vx = -vx * BALL_BOUNCE_FACTOR
+                ball_x = clamp(ball_x, ball.radius, table_width - ball.radius)
+                ball_y = clamp(ball_y, ball.radius, table_height - ball.radius)
+    ball.set_center((ball_x, ball_y))
+    drag_data["vx"], drag_data["vy"] = vx, vy
+    drag_data["x"], drag_data["y"] = ball_x, ball_y
+
+    update_player_positions()
+
+    targets_disp = ", ".join(f"{rod_targets[i]:.2f}" for i in range(4))
+    positions_disp = ", ".join(f"{rod_positions[i]:.2f}" for i in range(4))
+    state_text.set_text(
+        f"Rods P: [{positions_disp}]\nRods T: [{targets_disp}]"
+    )
