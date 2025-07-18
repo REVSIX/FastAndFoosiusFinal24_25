@@ -62,6 +62,7 @@ class SimplePID:
         self.prev_err = err
         return max(self.out_min, min(self.out_max, output))
 
+
 # --- Setup Graphics ---
 fig, ax = plt.subplots()
 fig.canvas.manager.set_window_title("FoosScope - Realistic Foosball Simulation")
@@ -72,10 +73,39 @@ ax.set_facecolor("forestgreen")
 ax.invert_yaxis()
 ax.add_patch(plt.Rectangle((0, 0), table_width, table_height, edgecolor='white', lw=3, facecolor='none'))
 
-# Rod graphics state
+# Goal counters
+goals_offense = 0
+goals_opponent = 0
+# Place the goal counter just below the field, but inside the plot area
+goal_text = ax.text(table_width/2, table_height - 10, "Offense: 0    Opponent: 0", fontsize=16, color="white", ha="center", va="top", bbox=dict(facecolor='black', alpha=0.7, boxstyle='round,pad=0.3'))
+
+
+# Rod graphics state (offense)
 rod_positions = [0.5] * 4
 rod_targets = [0.5] * 4
 rod_lines = [ax.plot([x, x], [0, table_height], color='white', lw=3)[0] for x in rod_x_asymptote_pixels]
+
+# Opponent (defense) rods: mirrored horizontally
+opponent_x_asymptote_pixels = [table_width - x for x in rod_x_asymptote_pixels]
+opponent_positions = [0.5] * 4
+opponent_targets = [0.5] * 4
+opponent_lines = [ax.plot([x, x], [0, table_height], color='red', lw=2, linestyle='--')[0] for x in opponent_x_asymptote_pixels]
+
+# Opponent player heads per rod
+opponent_players = []
+for rod_index, x in enumerate(opponent_x_asymptote_pixels):
+    patches = []
+    for i in range(player_counts[rod_index]):
+        circle = Circle((x, 0), radius=player_radius, edgecolor='red', facecolor='white', lw=1)
+        ax.add_patch(circle)
+        patches.append(circle)
+    opponent_players.append(patches)
+
+
+# Opponent reaction delay state: store last update and last target y for each rod
+opponent_last_update = [time.time()] * 4
+opponent_last_target_y = [None] * 4
+opponent_delay_active = [False] * 4
 
 # Ball setup
 ball = Circle((500, 200), radius=10, color='white')
@@ -176,6 +206,7 @@ def get_closest_player_index(rod_index, y_cross, rod_positions):
 def update_player_positions():
     ball_x, ball_y = ball.center
     vx, vy = drag_data["vx"], drag_data["vy"]
+    # Offense rods
     for rod_index, x in enumerate(rod_x_asymptote_pixels):
         patches = rod_players[rod_index]
         n_players = len(patches)
@@ -210,14 +241,60 @@ def update_player_positions():
         for i, patch in enumerate(patches):
             patch.center = (x, new_positions[i])
 
-def detect_ball_collision(ball_pos, ball_radius, rods, rod_players, player_radius):
-    # Check collision with players
+    # Opponent (defense) rods: mirror logic, but with initial reaction delay only
+    now = time.time()
+    for rod_index, x in enumerate(opponent_x_asymptote_pixels):
+        patches = opponent_players[rod_index]
+        n_players = len(patches)
+        rod_x = opponent_x_asymptote_pixels[rod_index]
+        y_cross = ball_y
+        y_cross = clamp(y_cross, player_radius, table_height - player_radius)
+        total_span = table_height - 2 * player_radius
+        spacing = total_span / (n_players + 1)
+        player_centers = [player_radius + (i + 1) * spacing for i in range(n_players)]
+        distances = [abs(y_cross - pc) for pc in player_centers]
+        intercept_idx = np.argmin(distances)
+        offset = y_cross - player_centers[intercept_idx]
+        min_offset = player_radius - min(player_centers)
+        max_offset = (table_height - player_radius) - max(player_centers)
+        offset = clamp(offset, min_offset, max_offset)
+        target_y = player_centers[intercept_idx] + offset
+
+        # Only apply delay if the target_y has changed significantly (i.e., new ball direction or big jump)
+        if opponent_last_target_y[rod_index] is None or abs(target_y - opponent_last_target_y[rod_index]) > 2:
+            if not opponent_delay_active[rod_index]:
+                opponent_delay_active[rod_index] = True
+                opponent_last_update[rod_index] = now
+            # Wait for delay to expire before updating target
+            if now - opponent_last_update[rod_index] < 0.25:
+                continue
+            opponent_delay_active[rod_index] = False
+        opponent_last_target_y[rod_index] = target_y
+
+        # Smoothly move the rod: interpolate current positions toward new positions
+        current_positions = [patch.center[1] for patch in patches]
+        target_positions = [pc + offset for pc in player_centers]
+        move_speed = 0.08
+        new_positions = [cur + move_speed * (tgt - cur) for cur, tgt in zip(current_positions, target_positions)]
+        for i, patch in enumerate(patches):
+            patch.center = (x, new_positions[i])
+
+def detect_ball_collision(ball_pos, ball_radius, rods, rod_players, player_radius, opponent_rods=None, opponent_players=None):
+    # Check collision with user players
     for rod_index, x in enumerate(rods):
         for patch in rod_players[rod_index]:
             px, py = patch.center
             dist = np.hypot(ball_pos[0] - px, ball_pos[1] - py)
             if dist < ball_radius + player_radius:
-                return ('player', rod_index, px, py)
+                return ('player', rod_index, px, py, 'user')
+    # Check collision with opponent players
+    if opponent_rods is not None and opponent_players is not None:
+        for rod_index, x in enumerate(opponent_rods):
+            for patch in opponent_players[rod_index]:
+                px, py = patch.center
+                dist = np.hypot(ball_pos[0] - px, ball_pos[1] - py)
+                if dist < ball_radius + player_radius:
+                    return ('player', rod_index, px, py, 'opponent')
     # Check collision with walls
     if ball_pos[1] - ball_radius <= 0:
         return ('wall', 'top')
@@ -231,6 +308,45 @@ def detect_ball_collision(ball_pos, ball_radius, rods, rod_players, player_radiu
 
 # Animate
 def animate(frame):
+    # --- Ball stuck logic: if the ball hasn't moved in 5 seconds, launch it randomly ---
+    if not hasattr(animate, "last_ball_pos"):
+        animate.last_ball_pos = ball.center
+        animate.last_ball_move_time = time.time()
+    cur_pos = ball.center
+    # Consider the ball moved if it has moved more than 1 pixel
+    if np.hypot(cur_pos[0] - animate.last_ball_pos[0], cur_pos[1] - animate.last_ball_pos[1]) > 1:
+        animate.last_ball_move_time = time.time()
+        animate.last_ball_pos = cur_pos
+    # If not moving and not in random_path, launch after 5 seconds
+    if not random_path["active"] and (time.time() - animate.last_ball_move_time > 5.0):
+        # Launch ball in random direction as if double-clicked
+        angle = random.uniform(0, 2 * np.pi)
+        length = random.uniform(100, 400)
+        speed = random.uniform(3, 10)
+        bx, by = ball.center
+        end_x = bx + np.cos(angle) * length
+        end_y = by + np.sin(angle) * length
+        end_x = clamp(end_x, ball.radius, table_width - ball.radius)
+        end_y = clamp(end_y, ball.radius, table_height - ball.radius)
+        direction = np.array([end_x - bx, end_y - by])
+        norm = np.linalg.norm(direction)
+        if norm == 0:
+            direction = np.array([1, 0])
+            norm = 1
+        direction = direction / norm
+        path_vec = np.array([end_x - bx, end_y - by])
+        path_length = np.linalg.norm(path_vec)
+        random_path["active"] = True
+        random_path["start"] = np.array([bx, by])
+        random_path["end"] = np.array([end_x, end_y])
+        random_path["speed"] = speed
+        random_path["direction"] = direction
+        random_path["t"] = 0
+        random_path["length"] = path_length
+        drag_data["vx"] = 0
+        drag_data["vy"] = 0
+        animate.last_ball_move_time = time.time()
+        animate.last_ball_pos = (end_x, end_y)
     now = time.time()
     for i in range(4):
         dt = now - rod_last_time[i]
@@ -245,7 +361,6 @@ def animate(frame):
     ball_speed = np.hypot(vx, vy)
     # If random_path is active, move ball along the segment
     if random_path["active"]:
-        # ...existing code...
         direction = random_path["direction"]
         speed = random_path["speed"] * BALL_SPEED_FACTOR * 8.0  # Much faster
         friction = 0.98  # Friction factor per frame
@@ -260,12 +375,12 @@ def animate(frame):
             direction[1] = -direction[1]
             next_pos[1] = clamp(next_pos[1], ball.radius, table_height - ball.radius)
             bounced = True
-        # Check collision with players
-        collision = detect_ball_collision(next_pos, ball.radius, rod_x_asymptote_pixels, rod_players, player_radius)
-        # Ball trapping logic: if ball speed < 10 and touching player, trap ball; else bounce off
+        # Check collision with both user and opponent players
+        collision = detect_ball_collision(next_pos, ball.radius, rod_x_asymptote_pixels, rod_players, player_radius, opponent_x_asymptote_pixels, opponent_players)
+        # Ball trapping logic: if ball speed < 10 and touching user player, trap ball; else bounce off any player
         if collision and collision[0] == 'player':
-            if speed < 10:
-                px, py = collision[2], collision[3]
+            px, py = collision[2], collision[3]
+            if collision[4] == 'user' and speed < 10:
                 next_pos[0] = px + (next_pos[0] - px)  # Stop at contact point
                 next_pos[1] = py + (next_pos[1] - py)
                 random_path["active"] = False
@@ -276,7 +391,6 @@ def animate(frame):
                 ball.set_center((ball_x, ball_y))
             else:
                 # Bounce off player as normal
-                px, py = collision[2], collision[3]
                 dx = next_pos[0] - px
                 dy = next_pos[1] - py
                 dist = np.hypot(dx, dy)
@@ -315,27 +429,32 @@ def animate(frame):
         vy *= BALL_SPEED_FACTOR
         ball_x += vx
         ball_y += vy
-        collision = detect_ball_collision((ball_x, ball_y), ball.radius, rod_x_asymptote_pixels, rod_players, player_radius)
-        # Ball trapping logic: if ball speed < 10 and touching player, do strafe+pass or strafe+shoot
+        collision = detect_ball_collision((ball_x, ball_y), ball.radius, rod_x_asymptote_pixels, rod_players, player_radius, opponent_x_asymptote_pixels, opponent_players)
+        # Ball trapping logic: if ball speed < 10 and touching user player, do strafe+pass or strafe+shoot
         if collision and collision[0] == 'player':
-            if np.hypot(vx, vy) < 10:
-                # --- Begin new strafe+pass/shoot state machine ---
-                if not hasattr(animate, "foos_state"):
+            px, py = collision[2], collision[3]
+            # --- Begin new strafe+pass/shoot state machine ---
+            if not hasattr(animate, "foos_state"):
+                animate.foos_state = "idle"
+                animate.foos_timer = 0
+                animate.foos_target_y = None
+                animate.foos_strafe_amt = None
+            # Possession: find which rod/player has the ball
+            possessor = None
+            for rod_index, rod_x in enumerate(rod_x_asymptote_pixels):
+                for patch in rod_players[rod_index]:
+                    px2, py2 = patch.center
+                    dist = np.hypot(ball_x - px2, ball_y - py2)
+                    if dist < player_radius + ball.radius + 1:
+                        possessor = (rod_index, px2, py2)
+            # --- Failsafe: if state machine is not idle but no possession, or stuck too long, reset to idle ---
+            if animate.foos_state != "idle":
+                # If no possession, or stuck in strafe/front_strafe for >1s, reset
+                if possessor is None or (animate.foos_state in ["strafe", "front_strafe"] and now - animate.foos_timer > 1.0):
                     animate.foos_state = "idle"
-                    animate.foos_timer = 0
-                    animate.foos_target_y = None
-                    animate.foos_strafe_amt = None
-                # Possession: find which rod/player has the ball
-                possessor = None
-                for rod_index, rod_x in enumerate(rod_x_asymptote_pixels):
-                    for patch in rod_players[rod_index]:
-                        px, py = patch.center
-                        dist = np.hypot(ball_x - px, ball_y - py)
-                        if dist < player_radius + ball.radius + 1:
-                            possessor = (rod_index, px, py)
+            if collision[4] == 'user' and np.hypot(vx, vy) < 10:
                 if animate.foos_state == "idle" and possessor is not None:
-                    rod_index, px, py = possessor
-                    import random
+                    rod_index, px2, py2 = possessor
                     n_players = player_counts[rod_index]
                     total_span = table_height - 2 * player_radius
                     spacing = total_span / (n_players + 1)
@@ -476,7 +595,6 @@ def animate(frame):
                 return
             else:
                 # Bounce off player as normal
-                px, py = collision[2], collision[3]
                 dx = ball_x - px
                 dy = ball_y - py
                 dist = np.hypot(dx, dy)
@@ -500,7 +618,74 @@ def animate(frame):
         drag_data["vx"], drag_data["vy"] = vx, vy
         drag_data["x"], drag_data["y"] = ball_x, ball_y
 
+
+    # --- Opponent shoot logic: if any opponent player is close to the ball, after a delay, shoot left ---
+    if not hasattr(animate, "opponent_shot_state"):
+        animate.opponent_shot_state = "idle"
+        animate.opponent_shot_timer = 0
+    # Only if ball is not already moving fast (i.e., not in random_path)
+    if not random_path["active"]:
+        # Check if any opponent player is close to the ball
+        found = False
+        for rod_index, x in enumerate(opponent_x_asymptote_pixels):
+            for patch in opponent_players[rod_index]:
+                px, py = patch.center
+                dist = np.hypot(ball.center[0] - px, ball.center[1] - py)
+                if dist < player_radius + ball.radius + 1:
+                    found = True
+                    break
+            if found:
+                break
+        now = time.time()
+        if found:
+            if animate.opponent_shot_state == "idle":
+                animate.opponent_shot_state = "waiting"
+                animate.opponent_shot_timer = now
+            elif animate.opponent_shot_state == "waiting":
+                if now - animate.opponent_shot_timer > 0.3:
+                    # Launch ball left (opponent's direction)
+                    bx, by = ball.center
+                    start = np.array([bx, by])
+                    end = np.array([0, by])
+                    direction = np.array([-1.0, 0.0])
+                    shot_speed = 4.0
+                    random_path["active"] = True
+                    random_path["start"] = start
+                    random_path["end"] = end
+                    random_path["speed"] = shot_speed
+                    random_path["direction"] = direction
+                    random_path["t"] = 0
+                    random_path["length"] = np.linalg.norm(end - start)
+                    drag_data["vx"] = 0
+                    drag_data["vy"] = 0
+                    ball.set_center((bx, by))
+                    animate.opponent_shot_state = "idle"
+        else:
+            animate.opponent_shot_state = "idle"
+
     update_player_positions()
+
+    # --- Goal detection and scoring (edge trigger, not level) ---
+    global goals_offense, goals_opponent
+    if not hasattr(animate, "in_goal_area"):
+        animate.in_goal_area = False
+    bx, by = ball.center
+    in_goal = (175 <= by <= 325) and (bx <= 25 or bx >= 775)
+    if in_goal and not animate.in_goal_area:
+        if bx <= 25:
+            goals_opponent += 1
+        elif bx >= 775:
+            goals_offense += 1
+        bx, by = table_width/2, table_height/2
+        ball.set_center((bx, by))
+        drag_data["vx"] = 0
+        drag_data["vy"] = 0
+        drag_data["x"], drag_data["y"] = bx, by
+        random_path["active"] = False
+        animate.in_goal_area = True
+    elif not in_goal:
+        animate.in_goal_area = False
+    goal_text.set_text(f"Offense: {goals_offense}    Opponent: {goals_opponent}")
 
     targets_disp = ", ".join(f"{rod_targets[i]:.2f}" for i in range(4))
     positions_disp = ", ".join(f"{rod_positions[i]:.2f}" for i in range(4))
@@ -594,7 +779,9 @@ fig.canvas.mpl_connect('key_press_event', on_key_press)
 # --- Patch animate to follow random path ---
 old_animate = animate
 
+
 def animate(frame):
+    global goals_offense, goals_opponent
     now = time.time()
     for i in range(4):
         dt = now - rod_last_time[i]
@@ -660,6 +847,32 @@ def animate(frame):
     ball.set_center((ball_x, ball_y))
     drag_data["vx"], drag_data["vy"] = vx, vy
     drag_data["x"], drag_data["y"] = ball_x, ball_y
+
+    # --- Goal detection and scoring (edge trigger, not level) ---
+    global goals_offense, goals_opponent
+    if not hasattr(animate, "in_goal_area"):
+        animate.in_goal_area = False
+    # Always use the latest ball position
+    bx, by = ball.center
+    in_goal = (200 <= by <= 300) and (bx <= 25 or bx >= 775)
+    if in_goal and not animate.in_goal_area:
+        # Ball just entered the goal area
+        if bx <= 25:
+            goals_opponent += 1
+        elif bx >= 775:
+            goals_offense += 1
+        # Reset ball to center
+        bx, by = table_width/2, table_height/2
+        ball.set_center((bx, by))
+        drag_data["vx"] = 0
+        drag_data["vy"] = 0
+        drag_data["x"], drag_data["y"] = bx, by
+        random_path["active"] = False
+        animate.in_goal_area = True
+    elif not in_goal:
+        animate.in_goal_area = False
+    # Update goal text
+    goal_text.set_text(f"Offense: {goals_offense}    Opponent: {goals_opponent}")
 
     update_player_positions()
 
