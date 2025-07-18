@@ -288,95 +288,180 @@ def animate(frame):
         ball_x += vx
         ball_y += vy
         collision = detect_ball_collision((ball_x, ball_y), ball.radius, rod_x_asymptote_pixels, rod_players, player_radius)
-        # Ball trapping logic: if ball speed < 10 and touching player, trap ball; else bounce off
+        # Ball trapping logic: if ball speed < 10 and touching player, do strafe+pass or strafe+shoot
         if collision and collision[0] == 'player':
             if np.hypot(vx, vy) < 10:
-                # Instead of just trapping, automatically pass or shoot
-                # --- Begin pass_when_stopped_and_touching logic ---
-                # Ball must be stopped
-                # Check if ball is touching any player
-                # Find all rods/players the ball is touching
-                touching = []
+                # --- Begin new strafe+pass/shoot state machine ---
+                if not hasattr(animate, "foos_state"):
+                    animate.foos_state = "idle"
+                    animate.foos_timer = 0
+                    animate.foos_target_y = None
+                    animate.foos_strafe_amt = None
+                # Possession: find which rod/player has the ball
+                possessor = None
                 for rod_index, rod_x in enumerate(rod_x_asymptote_pixels):
                     for patch in rod_players[rod_index]:
                         px, py = patch.center
                         dist = np.hypot(ball_x - px, ball_y - py)
-                        if dist < ball.radius + player_radius + 1:
-                            touching.append((rod_x, rod_index, px, py))
-                # If touching any, pick the closest rod in front (rightward)
-                if touching:
-                    # Sort rods by x (rightward, larger x)
-                    rods_sorted = sorted(rod_x_asymptote_pixels, reverse=True)
-                    next_rod_x = None
-                    for rx in rods_sorted:
-                        if rx > ball_x:
-                            next_rod_x = rx
-                            break
-                    # If at last row (no rod in front), shoot fast
-                    if next_rod_x is None:
-                        # Last row: shoot only after ball remains in y=200..300 for 0.5s
-                        if not hasattr(animate, "front_row_timer"):
-                            animate.front_row_timer = None
-                        if 200 <= ball_y <= 300:
-                            now = time.time()
-                            if animate.front_row_timer is None:
-                                animate.front_row_timer = now
-                            elif now - animate.front_row_timer >= 0.5:
-                                shoot_speed = 15
-                                drag_data["vx"] = -shoot_speed
-                                drag_data["vy"] = 0
-                                print(f"Front row: Ball at y={ball_y:.1f} for 0.5s, shot left fast.")
-                                animate.front_row_timer = None
-                            else:
-                                # Waiting for timer
-                                pass
-                            # Only return if shot was triggered
-                            if drag_data["vx"] == -15:
-                                return
-                        else:
-                            animate.front_row_timer = None
-                            import random
-                            target_y = random.uniform(200, 300)
-                            ball.set_center((ball_x, target_y))
-                            drag_data["x"] = ball_x
-                            drag_data["y"] = target_y
-                            shoot_speed = 15
-                            drag_data["vx"] = -shoot_speed
-                            drag_data["vy"] = 0
-                            print(f"Front row: Ball moved to y={target_y:.1f} and shot left fast.")
-                            return
+                        if dist < player_radius + ball.radius + 1:
+                            possessor = (rod_index, px, py)
+                if animate.foos_state == "idle" and possessor is not None:
+                    rod_index, px, py = possessor
+                    import random
+                    n_players = player_counts[rod_index]
+                    total_span = table_height - 2 * player_radius
+                    spacing = total_span / (n_players + 1)
+                    player_centers = [player_radius + (i + 1) * spacing for i in range(n_players)]
+                    distances = [abs(ball_y - pc) for pc in player_centers]
+                    intercept_idx = np.argmin(distances)
+                    if rod_index == 0:
+                        # --- FINAL ROW: edge player logic (leave as is for now) ---
+                        n_players = 3
+                        distances = [abs(ball_y - pc) for pc in player_centers]
+                        intercept_idx = np.argmin(distances)
+                        # For edge players, allow the rod to move so the player can reach the ball at the very top/bottom
+                        offset = ball_y - player_centers[intercept_idx]
+                        min_offset = player_radius - player_centers[intercept_idx]
+                        max_offset = (table_height - player_radius) - player_centers[intercept_idx]
+                        offset = clamp(offset, min_offset, max_offset)
+                        # Add a small random strafe for realism
+                        if intercept_idx == 1:
+                            amt = random.uniform(20, 40)
+                            direction = random.choice([-1, 1])
+                            target_y = clamp(player_centers[1] + offset + direction * amt, player_radius, table_height - player_radius)
+                        elif intercept_idx == 0:
+                            target_y = clamp(player_centers[0] + offset, player_radius, table_height - player_radius)
+                        elif intercept_idx == 2:
+                            target_y = clamp(player_centers[2] + offset, player_radius, table_height - player_radius)
                     else:
-                        pass_speed = 15
-                        strafe_amount = 2
-                        # Strafe up or down to avoid defense
-                        if ball_y < table_height / 2:
-                            new_y = min(ball_y + strafe_amount, table_height - ball.radius)
+                        # --- ALL OTHER RODS: classic pass logic for any player ---
+                        amt = random.uniform(10, 30)
+                        direction = random.choice([-1, 1])
+                        target_y = clamp(player_centers[intercept_idx] + direction * amt, player_radius, table_height - player_radius)
+                    animate.foos_target_y = target_y
+                    animate.foos_intercept_idx = intercept_idx
+                    animate.foos_state = "strafe"
+                    animate.foos_timer = now
+                    animate.foos_rod = rod_index
+                    animate.foos_is_final = (rod_index == 0)
+                    animate.foos_launch_delay = random.uniform(0.15, 0.35)
+                elif animate.foos_state == "strafe":
+                    # Smoothly move rod and ball together to target_y using player-centering logic (for ALL rods)
+                    rod_index = animate.foos_rod
+                    target_y = animate.foos_target_y
+                    intercept_idx = animate.foos_intercept_idx
+                    n_players = player_counts[rod_index]
+                    total_span = table_height - 2 * player_radius
+                    spacing = total_span / (n_players + 1)
+                    player_centers = [player_radius + (i + 1) * spacing for i in range(n_players)]
+                    offset = target_y - player_centers[intercept_idx]
+                    min_offset = player_radius - min(player_centers)
+                    max_offset = (table_height - player_radius) - max(player_centers)
+                    offset = clamp(offset, min_offset, max_offset)
+                    current_positions = [patch.center[1] for patch in rod_players[rod_index]]
+                    target_positions = [pc + offset for pc in player_centers]
+                    move_speed = 0.12
+                    new_positions = [cur + move_speed * (tgt - cur) for cur, tgt in zip(current_positions, target_positions)]
+                    for i, patch in enumerate(rod_players[rod_index]):
+                        patch.center = (rod_x_asymptote_pixels[rod_index], new_positions[i])
+                    # Ball is locked to the intercepting player
+                    ball_y_locked = new_positions[intercept_idx]
+                    ball_x_locked = rod_x_asymptote_pixels[rod_index]
+                    ball.set_center((ball_x_locked, ball_y_locked))
+                    drag_data["x"] = ball_x_locked
+                    drag_data["y"] = ball_y_locked
+                    # Wait a short, random time, then pass or shoot strictly horizontally
+                    if abs(ball_y_locked - target_y) < 1.5 and now - animate.foos_timer > animate.foos_launch_delay:
+                        launch_x = ball_x_locked + player_radius + ball.radius + 1
+                        launch_y = ball_y_locked
+                        if animate.foos_is_final:
+                            # For last row, shoot after a short randomized delay for any player
+                            # (no y-range check, just use the same delay logic as passes)
+                            start = np.array([launch_x, launch_y])
+                            end = np.array([table_width, launch_y])
+                            direction = np.array([1.0, 0.0])
+                            shot_speed = 4.0
+                            random_path["active"] = True
+                            random_path["start"] = start
+                            random_path["end"] = end
+                            random_path["speed"] = shot_speed
+                            random_path["direction"] = direction
+                            random_path["t"] = 0
+                            random_path["length"] = np.linalg.norm(end - start)
+                            drag_data["vx"] = 0
+                            drag_data["vy"] = 0
+                            ball.set_center((launch_x, launch_y))
+                            print(f"SHOT! Rod {rod_index}, y={launch_y:.1f}")
+                            animate.foos_state = "idle"
                         else:
-                            new_y = max(ball_y - strafe_amount, ball.radius)
-                        # Move ball to new_y (strafe)
-                        ball.set_center((ball_x, new_y))
-                        drag_data["x"] = ball_x
-                        drag_data["y"] = new_y
-                        # Now send a straight shot to the next row using linear trajectory
-                        # Find the next rod's x position (rightward pass)
-                        target_x = next_rod_x
-                        target_y = new_y
-                        direction = np.array([abs(target_x - ball_x), target_y - new_y])
+                            # Restore original pass logic for rods 1,2,3
+                            next_rod_index = rod_index + 1
+                            if next_rod_index < len(rod_x_asymptote_pixels):
+                                end_x = rod_x_asymptote_pixels[next_rod_index]
+                            else:
+                                end_x = table_width
+                            start = np.array([launch_x, launch_y])
+                            end = np.array([end_x, launch_y])
+                            direction = np.array([1.0, 0.0])
+                            pass_speed = 1.0
+                            random_path["active"] = True
+                            random_path["start"] = start
+                            random_path["end"] = end
+                            random_path["speed"] = pass_speed
+                            random_path["direction"] = direction
+                            random_path["t"] = 0
+                            random_path["length"] = np.linalg.norm(end - start)
+                            drag_data["vx"] = 0
+                            drag_data["vy"] = 0
+                            ball.set_center((launch_x, launch_y))
+                            print(f"Pass: Rod {rod_index} to {next_rod_index}, y={launch_y:.1f}")
+                            animate.foos_state = "idle"
+                elif animate.foos_state == "front_strafe":
+                    # Move rod and ball together to random y=200..300 (intertwined)
+                    rod_index = animate.foos_rod
+                    target_y = animate.foos_target_y
+                    n_players = player_counts[rod_index]
+                    total_span = table_height - 2 * player_radius
+                    spacing = total_span / (n_players + 1)
+                    player_centers = [player_radius + (i + 1) * spacing for i in range(n_players)]
+                    distances = [abs(target_y - pc) for pc in player_centers]
+                    intercept_idx = np.argmin(distances)
+                    offset = target_y - player_centers[intercept_idx]
+                    min_offset = player_radius - min(player_centers)
+                    max_offset = (table_height - player_radius) - max(player_centers)
+                    offset = clamp(offset, min_offset, max_offset)
+                    new_positions = [pc + offset for pc in player_centers]
+                    for i, patch in enumerate(rod_players[rod_index]):
+                        patch.center = (rod_x_asymptote_pixels[rod_index], new_positions[i])
+                    # Ball is locked to the rod during strafe
+                    ball.set_center((rod_x_asymptote_pixels[rod_index], target_y))
+                    drag_data["x"] = rod_x_asymptote_pixels[rod_index]
+                    drag_data["y"] = target_y
+                    # Wait a short time, then shoot hard using teleport-style trajectory
+                    if now - animate.foos_timer > 0.18:
+                        # Shoot hard in positive x direction
+                        start = np.array([rod_x_asymptote_pixels[rod_index], target_y])
+                        end = np.array([table_width, target_y])
+                        direction = end - start
                         norm = np.linalg.norm(direction)
                         if norm == 0:
                             direction = np.array([1, 0])
                             norm = 1
                         direction = direction / norm
-                        drag_data["vx"] = direction[0] * pass_speed
-                        drag_data["vy"] = direction[1] * pass_speed
-                        print(f"Pass: Ball strafed to ({ball_x:.1f},{new_y:.1f}) and sent straight to next rod at x={target_x} (rightward).")
-                        return
-                # --- End pass_when_stopped_and_touching logic ---
-                # If not touching any player, just trap
-                px, py = collision[2], collision[3]
-                ball_x = px + (ball_x - px)
-                ball_y = py + (ball_y - py)
-                vx, vy = 0, 0
+                        shot_speed = 7.33  # 1/3 of previous (was 22)
+                        random_path["active"] = True
+                        random_path["start"] = start
+                        random_path["end"] = end
+                        random_path["speed"] = shot_speed
+                        random_path["direction"] = direction
+                        random_path["t"] = 0
+                        random_path["length"] = np.linalg.norm(end - start)
+                        drag_data["vx"] = 0
+                        drag_data["vy"] = 0
+                        print(f"SHOT! Rod {rod_index}, y={target_y:.1f}")
+                        animate.foos_state = "idle"
+                        animate.foos_ball_locked = False
+                return
             else:
                 # Bounce off player as normal
                 px, py = collision[2], collision[3]
