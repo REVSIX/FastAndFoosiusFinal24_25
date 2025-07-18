@@ -1,3 +1,4 @@
+import random
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
@@ -15,6 +16,33 @@ BALL_SPEED_FACTOR = 1  # Much slower ball
 BALL_BOUNCE_FACTOR = 0.7  # Ball bounces with more energy
 min_rod_y, max_rod_y = player_radius / table_height, 1 - player_radius / table_height
 
+# --- Final rod strafe logic ---
+def final_rod_strafe(ball_y, player_centers):
+    # 3 players: index 0 (top), 1 (middle), 2 (bottom)
+    distances = [abs(ball_y - pc) for pc in player_centers]
+    intercept_idx = np.argmin(distances)
+    # For edge players, allow the rod to move so the player can reach the ball at the very top/bottom
+    offset = ball_y - player_centers[intercept_idx]
+    min_offset = player_radius - player_centers[intercept_idx]
+    max_offset = (table_height - player_radius) - player_centers[intercept_idx]
+    offset = clamp(offset, min_offset, max_offset)
+    center_y = player_centers[1]
+    if intercept_idx == 1:
+        amt = random.uniform(5, 25)
+        direction = random.choice([-1, 1])
+        # Middle player: strafe up or down (random direction)
+        return clamp(player_centers[1] + offset + direction * amt, player_radius, table_height - player_radius)
+    elif intercept_idx == 0:
+        # Top player: strafe DOWN toward center (more dramatic)
+        amt = random.uniform(90, 100)
+        return clamp(player_centers[0] + offset + amt, player_radius, table_height - player_radius)
+    elif intercept_idx == 2:
+        # Bottom player: strafe UP toward center (more dramatic)
+        amt = random.uniform(90, 100)
+        return clamp(player_centers[2] + offset - amt, player_radius, table_height - player_radius)
+    else:
+        return clamp(player_centers[intercept_idx] + offset, player_radius, table_height - player_radius)
+    
 # --- PID Controller ---
 class SimplePID:
     def __init__(self, kp, ki, kd, out_min=-1, out_max=1):
@@ -315,24 +343,8 @@ def animate(frame):
                     distances = [abs(ball_y - pc) for pc in player_centers]
                     intercept_idx = np.argmin(distances)
                     if rod_index == 0:
-                        # --- FINAL ROW: edge player logic (leave as is for now) ---
-                        n_players = 3
-                        distances = [abs(ball_y - pc) for pc in player_centers]
-                        intercept_idx = np.argmin(distances)
-                        # For edge players, allow the rod to move so the player can reach the ball at the very top/bottom
-                        offset = ball_y - player_centers[intercept_idx]
-                        min_offset = player_radius - player_centers[intercept_idx]
-                        max_offset = (table_height - player_radius) - player_centers[intercept_idx]
-                        offset = clamp(offset, min_offset, max_offset)
-                        # Add a small random strafe for realism
-                        if intercept_idx == 1:
-                            amt = random.uniform(20, 40)
-                            direction = random.choice([-1, 1])
-                            target_y = clamp(player_centers[1] + offset + direction * amt, player_radius, table_height - player_radius)
-                        elif intercept_idx == 0:
-                            target_y = clamp(player_centers[0] + offset, player_radius, table_height - player_radius)
-                        elif intercept_idx == 2:
-                            target_y = clamp(player_centers[2] + offset, player_radius, table_height - player_radius)
+                        # --- FINAL ROW: use a dedicated function for strafe logic ---
+                        target_y = final_rod_strafe(ball_y, player_centers)
                     else:
                         # --- ALL OTHER RODS: classic pass logic for any player ---
                         amt = random.uniform(10, 30)
