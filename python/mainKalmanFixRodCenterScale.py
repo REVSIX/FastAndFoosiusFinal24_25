@@ -189,7 +189,7 @@ rod_x_asymptote_pixels = [401, 254, 105, 29]  #rod 0 through 3, rod 0 is closest
 
 # Setup camera
 cap = cv2.VideoCapture(0,cv2.CAP_DSHOW)
-cap.set(cv2.CAP_PROP_BUFFERSIZE,1)
+cap.set(cv2.CAP_PROP_BUFFERSIZE,1.2)
 
 
 
@@ -199,7 +199,7 @@ if not cap.isOpened():
 
 # get everything ready for vision processing
 # camera resolution: 1920x1080 pixels
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1400)  # Set width to 2080 pixels                         
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 #fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=True) #used to detect moving object against static background
 
@@ -210,16 +210,17 @@ x2,y2 = 0,0
 x3,y3 = 0,0
 
 # to mark location of ball in camera frame, (yellow circle that shows up on screen)
-radius = 10
+radius = 7
 
 
 #Green ball threshold
 lower_bound = np.array([65, 50, 85])
 upper_bound = np.array([85, 110, 255])
 
-#pink tape for rods threshold
-lower_bound_rod = np.array([160, 63, 185])
-upper_bound_rod = np.array([180, 123, 260])
+# Pink tape HSV thresholds
+lower_bound_rod = np.array([145, 120, 180])  # H, S, V
+upper_bound_rod = np.array([170, 255, 255])
+
 
 final_centers = []  #store rod tape centers of rectangles
 

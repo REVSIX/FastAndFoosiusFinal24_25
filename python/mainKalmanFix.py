@@ -187,7 +187,7 @@ if not cap.isOpened():
 
 # get everything ready for vision processing
 # camera resolution: 1920x1080 pixels
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1400)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 #fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=True) #used to detect moving object against static background
 
