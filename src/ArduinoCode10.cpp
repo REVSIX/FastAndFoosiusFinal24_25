@@ -187,7 +187,7 @@ void setup() {
   findLimits(stepper4, limitSwitchLow1, limitSwitchHigh1);
 
 
-  //Serial.begin(115200); // Initialize serial communication at 115200 baud, test
+  Serial.begin(115200); // Initialize serial communication at 115200 baud, test
 
 
 }
@@ -235,54 +235,64 @@ void loop() {
 
   unsigned long currentMillis = millis();
 
-
-    for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 4; i++) {
     if (servoCurrent[i] != 0.0 && currentMillis - previousMillis[i] >= interval) {
-        previousMillis[i] = currentMillis; // Update last move time for this servo
+      previousMillis[i] = currentMillis; // Update last move time for this servo
+
+      int trapAngleRight = 15;  // Trap angle for ball coming from right
+      int trapAngleLeft = -15;  // Trap angle for ball coming from left
+      int trapAngleNeutral = -15; // Neutral trap
+      int kickAngle1, kickAngle2;
 
 
-        int trapAngle = 15;  // Angle for trapping
-        int kickAngle1, kickAngle2;
+      // Assign specific angles based on whether scoring or passing
+      if (i == 0 || i == 1) {
+        // Scoring kick (aggressive)
+        kickAngle1 = -60;  // Wind up
+        kickAngle2 = 10;   // Strike forward
+      } else {
+        // Passing motion (gentler)
+        kickAngle1 = -15;  // Light pull back
+        kickAngle2 = 15;    // Light push
+      }
 
 
-        // Assign specific angles based on whether scoring or passing
-        if (i == 0 || i == 1) {
-            // Scoring kick (aggressive)
-            kickAngle1 = -60;  // Wind up
-            kickAngle2 = 10;   // Strike forward
-        } else {
-            // Passing motion (gentler)
-            kickAngle1 = -15;  // Light pull back
-            kickAngle2 = 5;    // Light push
-        }
+      // Trap direction logic: servoDesired > 0 = right, < 0 = left, 0 = neutral
+      int trapAngle = trapAngleNeutral;
+      if (servoDesired[i] > 0.5) {
+        trapAngle = trapAngleRight;
+      } else if (servoDesired[i] < -0.5) {
+        trapAngle = trapAngleLeft;
+      } else {
+        trapAngle = trapAngleNeutral;
+      }
 
-
-        switch (currentStep[i]) {
-            case 0:
-                // Step 0: Trap
-                setServoPosition(i, trapAngle);
-                interval = 200;  // Time to hold trap
-                break;
-            case 1:
-                // Step 1: First part of kick (wind up)
-                setServoPosition(i, kickAngle1);
-                interval = 215;
-                break;
-            case 2:
-                // Step 2: Second part of kick (strike)
-                setServoPosition(i, kickAngle2);
-                interval = 115;
-                break;
-            case 3:
-                // Step 3: Return to neutral
-                setServoPosition(i, 0);
-                currentStep[i] = -1; // Reset
-                servoCurrent[i] = 0.0; // Mark kick done
-                break;
-        }
-        currentStep[i]++;
+      switch (currentStep[i]) {
+        case 0:
+          // Step 0: Trap in direction
+          setServoPosition(i, trapAngle);
+          interval = 200;  // Time to hold trap
+          break;
+        case 1:
+          // Step 1: First part of kick (wind up)
+          // setServoPosition(i, kickAngle1);
+          // interval = 215;
+          break;
+        case 2:
+          // Step 2: Second part of kick (strike)
+          setServoPosition(i, kickAngle2);
+          interval = 115;
+          break;
+        case 3:
+          // Step 3: Return to neutral
+          setServoPosition(i, 0);
+          currentStep[i] = -1; // Reset
+          servoCurrent[i] = 0.0; // Mark kick done
+          break;
+      }
+      currentStep[i]++;
     }
-    }
+  }
 
 
 

@@ -199,7 +199,7 @@ if not cap.isOpened():
 
 # get everything ready for vision processing
 # camera resolution: 1920x1080 pixels
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1400)  # Set width to 2080 pixels                         
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)  # Set width to 2080 pixels                         
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 #fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=True) #used to detect moving object against static background
 
@@ -309,7 +309,7 @@ while True:  #infinite loop to keep processing data
         if contours_rod:
             contours_rod = sorted(contours_rod, key=cv2.contourArea, reverse=True)
             for c in contours_rod[:4]:
-                if cv2.contourArea(c) > 20:
+                if cv2.contourArea(c) > 10:
                     x, y, w, h = cv2.boundingRect(c)
                     center_x = x + w // 2
                     center_y = y + h // 2
@@ -441,11 +441,21 @@ while True:  #infinite loop to keep processing data
     #80 pixels is threshold
     servoDesired = closeEnough(rod_x_asymptote_pixels, x3, 40) #boolean array if each rod is close enough
     servoDesired = [float(value) for value in servoDesired]
-    #print(servoDesired)
+    # Ball trapping logic: If ball is close to a rod and moving slowly, trigger trap
+    trap_threshold = 40  # pixels, same as closeEnough
+    velocity_threshold = 2  # pixels/frame, adjust as needed
+    for rod_idx, rod_x in enumerate(rod_x_asymptote_pixels):
+        if abs(x3 - rod_x) < trap_threshold and abs(vxCorrect) < velocity_threshold and abs(vyCorrect) < velocity_threshold:
+            # Ball is close to rod and nearly stopped, set servoDesired to trap (1.0)
+            servoDesired[rod_idx] = 1.0
+        # Optionally, release trap if ball moves away
+        elif servoDesired[rod_idx] == 1.0 and abs(x3 - rod_x) >= trap_threshold:
+            servoDesired[rod_idx] = 0.0
 
     #motorDesired = [round(val, 3) for val in motorDesired]
     # Display the result
-    cv2.imshow('Kalman Filter Tracking', frame)
+    if frame_counter % 5 == 0:
+        cv2.imshow('Kalman Filter Tracking', frame)
 
     # # set the values of x,y from vision to x2, y2 for prediction
     # #x2, y2 are the predicted values
