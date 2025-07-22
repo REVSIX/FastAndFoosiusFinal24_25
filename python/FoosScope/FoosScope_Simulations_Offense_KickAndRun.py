@@ -40,54 +40,10 @@ def detect_collision(ball_x, ball_y, rod_x, player_ys):
 
 # --- Main Simulation Function ---
 def simulate_one_play():
-    # Ball starts behind last offensive rod, random y
-    ball_x = random.uniform(ROD_XS[0] - 80, ROD_XS[0] - 30)
-    ball_y = random.uniform(PLAYER_RADIUS, TABLE_HEIGHT - PLAYER_RADIUS)
-    vx, vy = PASS_SPEED, 0
-    rod_centers = [TABLE_HEIGHT / 2 for _ in ROD_XS]
-    # Pass through rods 1,2,3 (right to left), targeting random players
-    for rod_idx in range(1, len(ROD_XS)):
-        next_rod_x = ROD_XS[rod_idx]
-        n_players = PLAYER_COUNTS[rod_idx]
-        # Choose a random player to pass to
-        player_centers = get_player_centers(TABLE_HEIGHT/2, n_players)
-        target_player = random.randint(0, n_players-1)
-        # Add some random offset to make it less deterministic
-        amt = random.uniform(-10, 10)
-        target_y = clamp(player_centers[target_player] + amt, PLAYER_RADIUS, TABLE_HEIGHT - PLAYER_RADIUS)
-        # Move rod center toward target_y with speed limit
-        dy = target_y - rod_centers[rod_idx]
-        move = np.clip(dy, -ROD_MAX_SPEED, ROD_MAX_SPEED)
-        rod_centers[rod_idx] = clamp(rod_centers[rod_idx] + move, PLAYER_RADIUS, TABLE_HEIGHT - PLAYER_RADIUS)
-        player_ys = get_player_centers(rod_centers[rod_idx], n_players)
-        # Stepwise pass
-        steps = int(abs(next_rod_x - ball_x) // 8) + 1
-        for step in range(steps):
-            frac = (step + 1) / steps
-            interp_x = ball_x + (next_rod_x - ball_x) * frac
-            interp_y = ball_y + (target_y - ball_y) * frac
-            # Check collision
-            hit = detect_collision(interp_x, interp_y, next_rod_x, player_ys)
-            if hit is not None:
-                ball_x, ball_y = next_rod_x, hit
-                break
-            if step == steps - 1:
-                ball_x, ball_y = next_rod_x, target_y
-    # Final rod: strafe to a random y, then shoot horizontally
-    rod_idx = 0
-    n_players = PLAYER_COUNTS[0]
-    # Strafe rod to a random y position (not just player centers)
-    target_y = random.uniform(PLAYER_RADIUS, TABLE_HEIGHT - PLAYER_RADIUS)
-    # Move rod center toward target_y with fast strafe
-    dy = target_y - rod_centers[0]
-    move = np.clip(dy, -ROD_MAX_SPEED * 3, ROD_MAX_SPEED * 3)
-    rod_centers[0] = clamp(rod_centers[0] + move, PLAYER_RADIUS, TABLE_HEIGHT - PLAYER_RADIUS)
-    # Ball y matches rod center after strafe
-    ball_y = rod_centers[0]
-    # Shoot strictly horizontal (vy=0)
+    # Kick and go: Ball starts behind last offensive rod, random y, and is shot hard and straight (no passing, no strafe, no directional control)
     launch_x = ROD_XS[0] + PLAYER_RADIUS + BALL_RADIUS + 1
-    launch_y = ball_y
-    vx = SHOT_SPEED * 2.5  # Much faster shot
+    launch_y = random.uniform(PLAYER_RADIUS, TABLE_HEIGHT - PLAYER_RADIUS)
+    vx = SHOT_SPEED * 2.5  # Match WinLoss sim speed
     vy = 0
     ball_x = launch_x
     ball_y = launch_y
@@ -95,8 +51,8 @@ def simulate_one_play():
     DEF_ROD_XS = [TABLE_WIDTH - x for x in ROD_XS]
     DEF_PLAYER_COUNTS = PLAYER_COUNTS
     DEF_BLOCK_RADIUS = PLAYER_RADIUS
-    DEF_MAX_SPEED = 12  # Slightly slower, more realistic defense speed
-    DEF_ERROR = 25      # More error, less perfect tracking
+    DEF_MAX_SPEED = 7  # More realistic defense speed
+    DEF_ERROR = 40     # Even larger error for more realism
     def_rod_centers = [TABLE_HEIGHT / 2 for _ in DEF_ROD_XS]
     goalie_delay = 0
     GOALIE_DELAY_STEPS = 32  # Much longer goalie delay
@@ -119,6 +75,7 @@ def simulate_one_play():
         for rod_idx in range(len(def_rod_centers)):
             def_x = DEF_ROD_XS[rod_idx]
             if rod_idx == 0:
+                # Goalie delay: only start tracking after a few steps
                 if goalie_delay < GOALIE_DELAY_STEPS:
                     goalie_delay += 1
                     continue
