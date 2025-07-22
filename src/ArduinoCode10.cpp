@@ -243,14 +243,23 @@ void loop() {
       int trapAngleLeft = -15;  // Trap angle for ball coming from left
       int trapAngleNeutral = -15; // Neutral trap
       int kickAngle1, kickAngle2;
-
+      int trapAngle = -15;
 
       // Assign specific angles based on whether scoring or passing
-      if (i == 0 || i == 1) {
+      if (i == 1) {
         // Scoring kick (aggressive)
+        trapAngle = -20; // Trap angle for scoring
         kickAngle1 = -60;  // Wind up
         kickAngle2 = 10;   // Strike forward
-      } else {
+      } 
+      else if (i == 2){
+        kickAngle2 = 20;
+      }
+      else if (i == 0){
+        trapAngle = -20;
+        kickAngle2 = 10;
+      }
+      else {
         // Passing motion (gentler)
         kickAngle1 = -15;  // Light pull back
         kickAngle2 = 15;    // Light push
@@ -258,20 +267,12 @@ void loop() {
 
 
       // Trap direction logic: servoDesired > 0 = right, < 0 = left, 0 = neutral
-      int trapAngle = trapAngleNeutral;
-      if (servoDesired[i] > 0.5) {
-        trapAngle = trapAngleRight;
-      } else if (servoDesired[i] < -0.5) {
-        trapAngle = trapAngleLeft;
-      } else {
-        trapAngle = trapAngleNeutral;
-      }
 
       switch (currentStep[i]) {
         case 0:
           // Step 0: Trap in direction
           setServoPosition(i, trapAngle);
-          interval = 200;  // Time to hold trap
+          interval = 3200;  // Time to hold trap
           break;
         case 1:
           // Step 1: First part of kick (wind up)
