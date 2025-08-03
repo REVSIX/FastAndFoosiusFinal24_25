@@ -83,13 +83,9 @@ Other scripts are for development or experimentation.
 ---
 
 ## 🚧 Ongoing Development
-
-- **Foosscope** is an early-stage simulator for testing strategies virtually
-- We're working on:
-  - Kalman filtering for more accurate ball prediction
-  - Coordinated rod movement
-  - Smarter offense/defense switching and behavior
+- Code development for this repository has recently closed. However, development may resume in the future.
+- Our results and research will be posted shortly. 
 
 ---
 
-Feel free to open issues, contribute code, or fork the project for your own robotics experiments!
+Feel free to contribute code or fork the project for your robotics experiments!
