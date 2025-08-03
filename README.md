@@ -19,10 +19,10 @@ python/mainKalmanFixRodCenterScale.py
 ### `python/foosScope/`
 This is the virtual simulator environment, called **FoosScope**.
 
-⚠️ It is still under heavy development and not yet fully stable.
-
 - `mainKalmanFixRodCenterScale.py` runs the real system with hardware.
 - FoosScope is a sandboxed virtual version designed for testing and visualizing strategies.
+- `VirtualFoosScope.py` is a visualized virtual version, designed for making qualitative observations.
+- The other files represent different strategies, and work by adjusting the simulation number parameter within the `run_simulations(int num)` function.
 
 ---
 
